@@ -5,7 +5,14 @@ $q = $argv[1];
 $mode = $argv[2];
 $input = preg_replace('/[^a-zA-Z]/', '', $q);
 if($q == ''){
-	noresult($mode);
+	$w->result(
+		'tylereich.colors picker',
+		"pick|$mode",
+		'Color Picker',
+		'Action this item to reveal the OS X color picker',
+		'icon.png',
+		'yes'
+	);
 	echo $w->toxml();
 	return;
 }
@@ -47,7 +54,14 @@ switch($mode){
 	if($input){
 		$rgba = name($input);
 	}else{
-		noresult($mode);
+		$w->result(
+			'tylereich.colors picker',
+			'color-pick',
+			'Color Picker',
+			'Action this item to reveal the OS X color picker',
+			'icon.png',
+			'yes'
+		);
 		echo $w->toxml();
 		return;
 	}
@@ -55,34 +69,45 @@ switch($mode){
 	
 	case 'pick':
 	$pick = explode('|', $q);
-	if ($pick[0] == 'pick') {
-		$color = jsonrgba(colorpicker());
-		$color = format($pick[1], jsonrgba($color));
-		if ($color) search($color);
-	} else {
-		echo format($pick[0], jsonrgba($pick[1]));
+	if($pick[0] == 'pick'){
+		$rgba = explode(',', `osascript -e 'tell application "Finder"' -e 'activate' -e 'choose color' -e 'end tell'`);
+		for($i=0;$i<count($rgba);$i++){
+			$rgba[$i] /= 65535;
+		}
+		$r = $rgba[0];
+		$g = $rgba[1];
+		$b = $rgba[2];
+		$return;
+		switch($pick[1]){
+			case 'hex':
+			$return = tohex($r,$g,$b);
+			break;
+			case 'hsl':
+			$return = tohsl($r,$g,$b);
+			break;
+			case 'rgb':
+			$return = torgb($r,$g,$b);
+			break;
+			case 'name':
+			$return = torgb($r,$g,$b);
+			break;
+		}
+		`osascript -e 'tell application "Alfred 2" to search "$return"'`;
+	}else{
+		echo $q;
 	}
-	return;
-	break;
-	
-	case 'reveal':
-	$reveal = explode('|', $q);
-	if ($reveal[0] == 'pick') { // if called on Choose Color result
-		$color = jsonrgba(colorpicker());
-		var_dump($color);
-		$color = format($reveal[1], jsonrgba($color));
-		var_dump($color);
-		if ($color) search($color);
-		return;
-	}
-	$color = colorpicker(jsonrgba($reveal[1]));
-	$color = jsonrgba($color);
-	if ($color) search(format($reveal[0], jsonrgba($color)));
 	return;
 	break;
 }
 if($rgba == false){
-	noresult($mode, 'No Color Matches');
+	$w->result(
+		'tylereich.colors-noresults',
+		'',
+		'No matching colors were found',
+		'Make sure you spelled your query correctly.',
+		'icon.png',
+		'no'
+	);
 	echo $w->toxml();
 	return;
 }
@@ -93,16 +118,11 @@ $a = $rgba[3];
 $hexraw = tohexraw($r,$g,$b,$a);
 
 if(!($w->read($w->cache()."/$hexraw.png"))){
-	$files = glob($w->cache().'/*'); // get all file names
-	foreach($files as $file){ // iterate files
-		if(is_file($file))
-			unlink($file); // delete file
-	}
 	$img_rgba = array(
-		round($r * 255),
-		round($g * 255),
-		round($b * 255),
-		round((1 - $a) * 127)
+		round($r*255),
+		round($g*255),
+		round($b*255),
+		round(abs($a-1)*127)
 	);
 	$img = imagecreatefrompng('checker.png');
 	$color = imagecolorallocatealpha(
@@ -126,14 +146,15 @@ $hsl = tohsl($r,$g,$b,$a);
 $name = toname(tohexraw($r,$g,$b));
 $rgb = torgb($r,$g,$b,$a);
 $rgb_pcnt = torgb_pcnt($r,$g,$b,$a);
-$uicolor = touicolor($r,$g,$b,$a);
+$rgb_obj = toobjc($r,$g,$b,$a);
+
 $modes = array(
 	'hex'=>$hex,
 	'hsl'=>$hsl,
 	'name'=>$name,
 	'rgb'=>$rgb,
 	'rgb_pcnt'=>$rgb_pcnt,
-	'uicolor'=>$uicolor
+	'objc'=> $rgb_obj
 );
 if(!$a){
 	$description = array(
@@ -142,7 +163,7 @@ if(!$a){
 		'name'=>'CSS3 named color',
 		'rgb'=>'RGB format',
 		'rgb_pcnt'=>'RGB percent format',
-		'uicolor'=>'UIColor format'
+		'objc'=>'UIColor'
 	);
 }else{
 	$description = array(
@@ -151,17 +172,17 @@ if(!$a){
 		'name'=>'CSS3 named color',
 		'rgb'=>'RGBA format',
 		'rgb_pcnt'=>'RGBA percent format',
-		'uicolor'=>'UIColor format'
+		'objc'=>'UIColor'
 	);
 }
-$json = jsonrgba($rgba);
+
 foreach($modes as $this_mode=>$result){
 	if($result == false){
 		continue;
 	}
 	$w->result(
 		"tylereich.colors $mode to $this_mode",
-		"$this_mode|$json",
+		$result,
 		$result,
 		$description[$this_mode],
 		$w->cache()."/$hexraw.png",
@@ -170,8 +191,7 @@ foreach($modes as $this_mode=>$result){
 }
 echo $w->toxml();
 
-// Normalization functions
-function rgb($r=0, $g=0, $b=0, $a=null) {
+function rgb($r=0,$g=0,$b=0,$a=null){
 	if(preg_match('/%/', $r) || preg_match('/%/', $g) || preg_match('/%/', $b)){
 		$r = str_replace('%','',$r);
 		$g = str_replace('%','',$g);
@@ -212,17 +232,9 @@ function rgb($r=0, $g=0, $b=0, $a=null) {
 	$rgba = array($r,$g,$b,$a);
 	return $rgba;
 }
-function hsl($h=null, $s=null, $l=null, $a=null) {
-	$h = !$h ? 0 : $h;
-	$s = !$s ? 100 : $s;
-	$l = !$l ? 50 : $l;
-	$h = ($h >= 360 || $h < 0) ? 0 : $h;
+function hsl($h=0,$s=100,$l=50,$a=null){
 	$h /= 360;
-	$s = $s > 100 ? 100 : $s;
-	$s = $s < 0 ? 0 : $s;
 	$s /= 100;
-	$l = $l > 100 ? 100 : $l;
-	$l = $l < 0 ? 0 : $l;
 	$l /= 100;
 	$r; $g; $b;
 	if($s == 0){
@@ -252,8 +264,7 @@ function hsl($h=null, $s=null, $l=null, $a=null) {
 	}
 	return array($r, $g, $b, 1);
 }
-function hex($hex) {
-	// no need for normalization; handled by hexdec()
+function hex($hex){
 	$hex = str_split($hex);
 	$count = count($hex);
 	if($count<=3){
@@ -309,7 +320,7 @@ function hex($hex) {
 	}
 	return $rgba;
 }
-function name($q) {
+function name($q){
 	global $names;
 	foreach($names as $hex=>$name){
 		if($q == $name){
@@ -325,8 +336,7 @@ function name($q) {
 	return false;
 }
 
-// Pretty print functions
-function tohexraw($r, $g, $b, $a=false) {
+function tohexraw($r,$g,$b,$a=false){
 	$hex = array(
 		dechex(round($r*255)),
 		dechex(round($g*255)),
@@ -344,11 +354,11 @@ function tohexraw($r, $g, $b, $a=false) {
 	$hex = implode('',$hex);
 	return $hex;
 }
-function tohex($r, $g, $b, $a=false) {
+function tohex($r,$g,$b,$a=false){
 	$hex = tohexraw($r,$g,$b,$a);
 	return "#$hex";
 }
-function tohsl($r=0, $g=0, $b=0, $a=false) {
+function tohsl($r=0,$g=0,$b=0,$a=false){
 	$max = max($r,$g,$b);
 	$min = min($r,$g,$b);
 	$h = $s = $l = ($max + $min) / 2;
@@ -374,7 +384,7 @@ function tohsl($r=0, $g=0, $b=0, $a=false) {
 	}
 	return "hsl($h, $s%, $l%)";;
 }
-function toname($hex='') {
+function toname($hex){
 	global $names;
 	if($names[$hex]){
 		return $names[$hex];
@@ -382,7 +392,7 @@ function toname($hex='') {
 		return false;
 	}
 }
-function torgb($r=0, $g=0, $b=0, $a=false) {
+function torgb($r=0,$g=0,$b=0,$a=false){
 	$r = round($r*255);
 	$g = round($g*255);
 	$b = round($b*255);
@@ -392,7 +402,7 @@ function torgb($r=0, $g=0, $b=0, $a=false) {
 	}
 	return "rgb($r, $g, $b)";
 }
-function torgb_pcnt($r=0, $g=0, $b=0, $a=false) {
+function torgb_pcnt($r=0,$g=0,$b=0,$a=false){
 	$r = round($r*100,1);
 	$g = round($g*100,1);
 	$b = round($b*100,1);
@@ -402,92 +412,16 @@ function torgb_pcnt($r=0, $g=0, $b=0, $a=false) {
 	}
 	return "rgb($r%, $g%, $b%)";
 }
-function touicolor($r=0, $g=0, $b=0, $a=false) {
-	$r = round($r,3);
-	$g = round($g,3);
-	$b = round($b,3);
-	if($a !== false){
+
+function toobjc($r=0,$g=0,$b=0,$a=false){
+	$r = round($r, 3);
+	$g = round($g, 3);
+	$b = round($b, 3);
+			
+	if($a !== false) {
 		$a = round($a, 3);
 		return "[UIColor colorWithRed:$r green:$g blue:$b alpha:$a]";
 	}
-	return "[UIColor colorWithRed:$r green:$g blue:$b alpha:1.0]";
-}
-
-
-// Convert JSON to assoc array and vice versa
-function jsonrgba($rgba) {
-	if (gettype($rgba) == 'string') {
-		return json_decode($rgba, true);
-	} elseif (!$rgba) {
-		return false;
-	} else {
-		$keys = array(
-			'r',
-			'g',
-			'b',
-			'a'
-		);
-		if (count($rgba) == 3) $rgba[] = 1;
-		$rgba = array_combine($keys, $rgba);
-		return json_encode($rgba);
-	}
-}
-
-// Color Picker functions
-function search($input) {
-	`osascript -e 'tell application "Alfred 2" to search "$input"'`;
-}
-function colorpicker($rgba=null) {
-	$rgba = $rgba ? $rgba : array('r'=>0,'g'=>0,'b'=>0,'a'=>1);
-	foreach($rgba as $chan => $val){
-		$rgba[$chan] = $val * 65535;
-	}
-	$color = '{'.$rgba['r'].', '.$rgba['g'].', '.$rgba['b'].'}';
-	$rgba = `osascript -e 'tell application "Alfred 2"' -e 'activate' -e 'choose color default color $color' -e 'end tell'`;
-	if ($rgba) {
-		$rgba = explode(',', $rgba);
-	} else {
-		return false;
-	}
-	for ($i = 0; $i < count($rgba); $i++) {
-		$rgba[$i] /= 65535;
-	}
-	return $rgba;
-}
-function format($mode='rgb', $rgba) {
-	if (!$rgba) return false;
-	$r = $rgba['r'];
-	$g = $rgba['g'];
-	$b = $rgba['b'];
-	switch ($mode) {
-		case 'hex':
-		return tohex($r,$g,$b);
-		
-		case 'hsl':
-		return tohsl($r,$g,$b);
-		
-		case 'rgb':
-		return torgb($r,$g,$b);
-		
-		case 'rgb_pcnt':
-		return torgb_pcnt($r,$g,$b);
-		
-		case 'name':
-		return torgb($r,$g,$b);
-
-		case 'uicolor':
-		return touicolor($r,$g,$b);
-	}
-}
-function noresult($mode='rgb', $title='Color Picker') {
-	global $w;
-	$w->result(
-		'tylereich.colors picker',
-		"pick|$mode",
-		$title,
-		'Action this item to reveal the OS X color picker',
-		'icon.png',
-		'yes'
-	);
+		return "[UIColor colorWithRed:$r green:$g blue:$b alpha:1.000]";
 }
 ?>
